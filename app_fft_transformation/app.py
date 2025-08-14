@@ -230,12 +230,8 @@ def generate_fft_figure(df, state, signal, pad_length=10,
                                                method=filter_type)
     recon_signal = np.real(ifft(filtered_fft_vals))
 
-    # Force padded margins to 0 for the reconstructed plot too, so padding is visibly zero
-    y_plot_recon = recon_signal.copy()
-    if pad_length > 0:
-        y_plot_recon[:pad_length] = 0.0
-        if pad_side == "both":
-            y_plot_recon[-pad_length:] = 0.0
+    # Keep the padded reconstruction as-is (same length as padded input)
+    y_plot_recon = recon_signal  # length = len(y_padded_fft)
 
     # Spectrum from filtered FFT
     periods, magnitude = compute_power_spectrum(freqs, filtered_fft_vals)
