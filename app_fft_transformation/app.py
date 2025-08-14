@@ -77,10 +77,9 @@ def detect_schema(df: pd.DataFrame):
 # =========================
 # FFT Utilities
 # =========================
-def extract_signal(df, state, signal, date_cutoff="2020-12-31", remove_mean=False):
+def extract_signal(df, state, signal, date_cutoff="2020-12-31"):
     """
     Returns raw y, t_raw, and the raw mean (float).
-    (Param remove_mean kept for backward-compatibility; not used here.)
     """
     curve = df.loc[
         (df["geo_value"] == state) & (df["time_value"] <= date_cutoff),
@@ -142,8 +141,7 @@ def compute_power_spectrum(freqs, fft_vals):
     return periods, magnitude
 
 def create_fft_plot(full_time, y_plot_original, y_plot_recon,
-                    periods, magnitude, signal, state,
-                    remove_mean: bool):
+                    periods, magnitude, signal, state):
     fig = make_subplots(
         rows=2, cols=1, vertical_spacing=0.15,
         subplot_titles=[
@@ -152,8 +150,8 @@ def create_fft_plot(full_time, y_plot_original, y_plot_recon,
         ]
     )
 
-    orig_label = "Original (mean-removed)" if remove_mean else "Original (raw)"
-    recon_label = "Reconstructed (filtered, mean-removed)" if remove_mean else "Reconstructed (filtered)"
+    orig_label = "Original (mean-removed)"
+    recon_label = "Reconstructed (filtered, mean-removed)"
 
     fig.add_trace(
         go.Scatter(x=full_time, y=y_plot_original, name=orig_label, line=dict(color="gray")),
@@ -194,30 +192,19 @@ def create_fft_plot(full_time, y_plot_original, y_plot_recon,
 
 def generate_fft_figure(df, state, signal, pad_length=10,
                         low_cutoff=0.01, high_cutoff=0.5,
-                        filter_type="hard", pad_side="both",
-                        remove_mean=True):
+                        filter_type="hard", pad_side="both"):
     """
-    If remove_mean is True:
       - original := raw - mean
       - FFT/iFFT are done on mean-removed values
       - reconstructed is also mean-removed
       - both traces are zero-padded for display (padding shows as 0)
-    If remove_mean is False:
-      - original := raw
-      - FFT/iFFT on raw values
-      - reconstructed stays on raw baseline
-      - both traces are zero-padded for display (padding shows as 0)
     """
-    y_raw, t_raw, y_mean = extract_signal(df, state, signal, remove_mean=remove_mean)
+    y_raw, t_raw, y_mean = extract_signal(df, state, signal)
     if y_raw is None:
         return go.Figure().update_layout(title="No data available")
 
-    if remove_mean:
-        y_for_fft = y_raw - y_mean
-        y_original_for_plot = y_for_fft
-    else:
-        y_for_fft = y_raw
-        y_original_for_plot = y_raw
+    y_for_fft = y_raw - y_mean
+    y_original_for_plot = y_for_fft
 
     # Zero-padding for math & for visualization
     y_padded_fft, full_time = preprocess_signal(y_for_fft, t_raw, pad_length, pad_side)
@@ -238,8 +225,7 @@ def generate_fft_figure(df, state, signal, pad_length=10,
 
     return create_fft_plot(
         full_time, y_plot_original, y_plot_recon,
-        periods, magnitude, signal, state,
-        remove_mean=remove_mean
+        periods, magnitude, signal, state
     )
 
 # =========================
@@ -269,16 +255,8 @@ app.layout = html.Div(style={"display": "flex"}, children=[
         dcc.Store(id="data-store"),
         dcc.Store(id="schema-store"),
 
-        html.P("Workflow: (1) choose mean removal, (2) choose frequency band, (3) pad, (4) analyze.",
+        html.P("Workflow: (1) choose frequency band, (2) pad, (3) analyze.",
                style={"fontSize": "13px", "marginBottom": "10px"}),
-
-        # --- Remove mean ABOVE padding; default ON ---
-        dcc.Checklist(
-            id="remove-mean",
-            options=[{"label": " Remove mean before FFT (default)", "value": "rm"}],
-            value=["rm"],
-            style={"marginBottom": "16px", "fontSize": "13px"}
-        ),
 
         html.Label("Select State:", style={"marginBottom": "5px"}),
         dcc.Dropdown(id="state-dropdown", options=[], value=None, style={"marginBottom": "14px"}),
@@ -307,10 +285,8 @@ app.layout = html.Div(style={"display": "flex"}, children=[
 
     html.Div(style={"width": "72%", "padding": "20px"}, children=[
         html.P([
-            "If 'Remove mean' is checked, the top plot shows the mean-removed original (gray) ",
-            "and the mean-removed reconstruction (blue). ",
-            "If unchecked, it shows the raw original and raw reconstruction. ",
-            "Padding is shown explicitly as zeros on both curves."
+            "The top plot always shows the mean-removed original (gray) and the mean-removed reconstruction (blue). ",
+            "Padding is shown explicitly as zeros on the original curve."
         ], style={"fontSize": "14px", "marginBottom": "10px"}),
 
         dcc.Graph(id="fft-figure")
@@ -333,7 +309,7 @@ def init_or_upload(contents, filename):
         try:
             df_up = parse_uploaded_contents(contents, filename)
             schema = detect_schema(df_up)
-            status = f"Loaded file: {filename}\nMode: {schema['mode']}\nRows: {len(schema['df'])}"
+            status = f"Loaded file: {filename}\n"
             return (
                 schema["df"].to_dict("records"),
                 {"mode": schema["mode"], "states": schema["states"], "signals": schema["signals"]},
@@ -383,9 +359,8 @@ def populate_dropdowns(schema):
     Input("freq-range", "value"),
     Input("pad-length", "value"),
     Input("pad-side", "value"),
-    Input("remove-mean", "value"),
 )
-def update_fft_plot(data_records, schema, state, signal, freq_range, pad_len, pad_side, remove_mean_values):
+def update_fft_plot(data_records, schema, state, signal, freq_range, pad_len, pad_side):
     if not data_records or not schema or state is None or signal is None:
         return go.Figure().update_layout(title="No data available")
 
@@ -394,7 +369,6 @@ def update_fft_plot(data_records, schema, state, signal, freq_range, pad_len, pa
         return go.Figure().update_layout(title="Uploaded data missing required columns after normalization.")
 
     low_cutoff, high_cutoff = freq_range
-    remove_mean = ("rm" in (remove_mean_values or []))  # default True from layout
 
     return generate_fft_figure(
         df, state, signal,
@@ -402,8 +376,7 @@ def update_fft_plot(data_records, schema, state, signal, freq_range, pad_len, pa
         low_cutoff=float(low_cutoff),
         high_cutoff=float(high_cutoff),
         filter_type="hard",
-        pad_side=pad_side,
-        remove_mean=remove_mean
+        pad_side=pad_side
     )
 
 if __name__ == "__main__":
