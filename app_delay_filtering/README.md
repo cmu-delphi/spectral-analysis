@@ -1,46 +1,86 @@
-#### The Variation Threshold Depends On
+# COVID Delay-Aware Deconvolution Dashboard
 
-1. Delay Distribution (Main Factor)
+This Dash app provides an interactive environment to **reconstruct infection curves** from confirmed COVID-19 cases, using **delay distributions** between infection and case reporting. It supports both **synthetic Gamma-based delays** and **real-world line-list data**.  
 
-- The delay distribution $g(t)$ acts like a low-pass filter.
-- Its Fourier transform $\hat g(\omega)$ tells us which frequencies (oscillations in β or infections) pass through.
-- It defines a cutoff frequency $\omega_c$ beyond which β(t) fluctuations are unidentifiable — they get smoothed away.
+The app also visualizes delay kernels, fits simple Gamma distributions (method of moments), and provides frequency-domain insights via the FFT power spectrum.  
 
-This is independent of the specific confirmed case curve. Only β(t) components with frequencies below this window are theoretically recoverable.
+---
 
-2. Confirmed Cases Curve (Affects Realistic Detectability)
-While the delay distribution defines the theoretical limit, the actual confirmable information also depends on:
+## Features
 
-- The shape and energy of the infection signal (which comes from β(t)),
-- The magnitude of the signal (e.g., low vs high case counts),
-- The noise level in the data (real-world observation error).
+- **Upload-free default data**: Uses U.S. state-level confirmed cases (`combined_state_no_revision.csv`).
+- **Delay modeling options**:
+  - *Synthetic Gamma distribution*: parameterized by mean and scale.  
+  - *Real delay distributions* from published linelist datasets:
+    - China (30 provinces included, [Zhang et al. (2020)](https://www.thelancet.com/journals/laninf/article/PIIS1473-3099(20)30230-9/fulltext))
+    - US CDC ([COVID-19 Case Surveillance line list](https://data.cdc.gov/Case-Surveillance/COVID-19-Case-Surveillance-Restricted-Access-Detai/mbd7-r32t/about_data))
+    - Hong Kong ([Chen et al. (2025)](https://www.nature.com/articles/s41467-025-60591-x))
+- **Rolling kernel estimation**:
+  - Histogram-based  
+  - Weighted Kernel Density Estimation (KDE)  
+- **Deconvolution methods**:
+  - FFT deconvolution  
+  - Wiener deconvolution  
+- **Diagnostics**:
+  - Forward simulation (reconvolution) of reconstructed infections to compare with observed cases  
+  - RMSE error metrics for fit quality  
+- **Visualizations**:
+  - Observed vs. reconstructed vs. reconvolved case curves  
+  - Delay kernel distribution with Gamma fit summary  
+  - FFT power spectrum of the delay distribution  
 
-So, even if a frequency is “passable” by $\hat g(\omega)$, if the corresponding component of β(t) is too weak (low amplitude), it may not be distinguishable from noise.
+---
 
-From the convolution relationship in the frequency domain:
-$$
-\hat{C}(\omega) = \hat{I}(\omega) \cdot \hat{g}(\omega)
-$$
+## How It Works
 
-Now we want to explore: for which frequencies does $ \hat{g}(\omega) \approx 0 $, such that changes in $ \hat{I}(\omega) $ (or equivalently $ \beta(t) $ ) become invisible in the confirmed cases?
+### 1. Infection Reconstruction (Figure 1)
+
+We observe confirmed cases \( C(t) \), which are modeled as the **convolution** of the latent infections \( I(t) \) with a delay distribution (kernel) \( g(\tau) \):  
+
+\[
+C(t) \;=\; (I * g)(t) \;=\; \sum_{\tau=0}^{\infty} I(t-\tau) \, g(\tau).
+\]
+
+The app provides two methods to **deconvolve** the observed curve \( C(t) \) and recover an estimate of the infection curve \( \hat{I}(t) \):  
+
+- **FFT deconvolution**  
+- **Wiener deconvolution** (regularized, to stabilize against noise)
+
+After deconvolution, we perform a **forward check** by reconvolving \( \hat{I}(t) \) with the same kernel \( g(\tau) \):  
+
+\[
+\hat{C}(t) = (\hat{I} * g)(t).
+\]
+
+This reconvolved curve \( \hat{C}(t) \) is plotted against the observed \( C(t) \) to verify the accuracy of reconstruction.  
+Error metrics (e.g. RMSE) are computed to quantify the fit.  
+
+---
+
+### 2. Delay Distribution Visualization (Figure 2)
+
+The second panel focuses **only** on the delay distribution itself.  
+
+- When using **synthetic delays**, the kernel is parameterized as a Gamma distribution:
+
+\[
+g(\tau; k, \theta) = \frac{1}{\Gamma(k)\,\theta^k} \tau^{k-1} e^{-\tau/\theta}, \quad \tau \geq 0
+\]
+
+with shape \( k \) and scale \( \theta \).  
+
+- When using **real linelist data**, the empirical delay distribution is estimated either by:
+  - Histogram of observed delays  
+  - Weighted kernel density estimation (KDE)  
+
+Because real delays may vary over time, the app allows you to **select an end window date** and compute the distribution from data up to that point.  
+Alternatively, you can manually increase the window size to approximate the **full distribution across all cases**.  
+
+---
+
+Together, these two parts let you:
+1. Recover latent infection dynamics from reported cases (with verification).  
+2. Inspect and analyze the delay distribution structure itself, including its evolution over time.  
 
 
-By plotting the magnitude response of the delay distribution in the frequency domain $
-|\hat{g}(\omega)|,
-$
 
-we obtain the attenuation profile of the delay kernel. This profile indicates how different frequency components of the infection signal are preserved or suppressed due to the delay structure.
-
-To determine a cutoff frequency, we define a threshold (e.g., 10\% ? ):
-$$
-|\hat{g}(\omega)| < 0.1
-$$
-Frequencies satisfying this condition are considered \emph{unidentifiable} because any corresponding variations in $ \beta(t) $ will be strongly attenuated in the observed confirmed case data.
-
-The cutoff frequency $\omega_c $ where $ |\hat{g}(\omega)| $ drops below the threshold defines the theoretical limit of identifiability under the given delay distribution.
-
-| Method                        | Theoretical or Empirical | Depends on delay? | Depends on cases? | Other notes                           |
-| ----------------------------- | ------------------------ | ----------------- | ----------------- | ----------------------------------- |
-| Fourier cutoff from $\hat{g}$ | Theoretical              | yes             | no              | General limit                       |
-| Noise sweep experiment        | Empirical                | yes             | yes             | Realistic identifiability threshold |
-| Sinusoidal injection test     | Semi-empirical           | yes             | yes             | Frequency-specific detectability    |
