@@ -36,7 +36,12 @@ To run App app-name
 python app-name/app.py
 ```
 
-Each app is fully self-contained
+Each app is fully self-contained.
+
+For example, from within the spectral-analysis folder, you can launch App A with:
+```
+python app_fft_transformation/app.py
+```
 
 Then open the link in your browser (usually http://127.0.0.1:8050/).
 
