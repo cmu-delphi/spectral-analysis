@@ -191,7 +191,7 @@ app = Dash(__name__)
 app.title = "COVID Delay-Aware Deconvolution (Rolling Kernel)"
 app.layout = html.Div([
     html.Div([
-        html.H2("Reverse Confirmed Cases to Infection Curve"),
+        html.H2("Reverse Confirmed Cases to Symptomatic Curve"),
         html.Label("Select Region:"),
         dcc.Dropdown(id="geo-dropdown",
                      options=[{"label": g, "value": g} for g in geo_options],
@@ -396,11 +396,11 @@ def update_figures(n_clicks, geo_value, delay_source, mean, scale,
     fig_main = go.Figure()
     fig_main.add_trace(go.Scatter(x=time, y=confirmed, mode='lines', name='Confirmed Cases'))
 
-    fig_main.add_trace(go.Scatter(x=time, y=wiener_curve, mode='lines', name='Wiener deconv'))
+    fig_main.add_trace(go.Scatter(x=time, y=wiener_curve, mode='lines', name='Wiener deconv Symptomatic'))
     fig_main.add_trace(go.Scatter(x=time, y=wiener_reconv, mode='lines', line=dict(dash='dash'),
                                   name=f'Wiener re-conv (RMSE {rmse_wiener:.1f})'))
 
-    fig_main.add_trace(go.Scatter(x=time, y=altered_infection, mode='lines', name='Alt Infection (hi-freq)'))
+    fig_main.add_trace(go.Scatter(x=time, y=altered_infection, mode='lines', name='Alt Symptomatic (+hi-freq)'))
     fig_main.add_trace(go.Scatter(x=time, y=altered_reconv, mode='lines', line=dict(dash='dot'),
                                   name=f'Alt reconv (RMSE {rmse_altered:.1f})'))
 
