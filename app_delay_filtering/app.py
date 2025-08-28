@@ -189,7 +189,6 @@ def rmse(a, b):
 # =============== Dash App UI =============================================
 app = Dash(__name__)
 app.title = "COVID Delay-Aware Deconvolution (Rolling Kernel)"
-
 app.layout = html.Div([
     html.Div([
         html.H2("Reverse Confirmed Cases to Infection Curve"),
@@ -210,6 +209,7 @@ app.layout = html.Div([
             value="synthetic"
         ),
         html.Div(id="real-source-info", style={"color": "blue", "marginTop": "5px"}),  # <-- Blue info line
+
         html.Div([
             html.Label("Gamma Mean:"),
             dcc.Input(id="mean", type="number", value=5, step=0.1),
@@ -217,6 +217,7 @@ app.layout = html.Div([
             html.Label("Gamma Scale:"),
             dcc.Input(id="scale", type="number", value=1, step=0.1),
         ], id="gamma-controls", style={"marginTop": "8px"}),
+
         html.Div([
             html.Label("Kernel Method:"),
             dcc.RadioItems(
@@ -240,9 +241,24 @@ app.layout = html.Div([
                                  display_format="YYYY-MM-DD",
                                  placeholder="YYYY-MM-DD")
         ], id="real-controls", style={"display": "none", "marginTop": "8px"}),
+
         html.Br(),
+        html.Label("Amplitude of the Extra High Freq Component"),
+        dcc.Slider(id="hf-strength", min=0, max=3, step=0.1, value=0.5,
+                   tooltip={"placement": "bottom"},
+                   marks={0: "0", 1: "1", 2: "2", 3: "3"},
+                   included=False),
+        html.Br(),
+        html.Label("Freq (cycles/day) of the Extra High Freq Component"),
+        dcc.Slider(id="hf-freq", min=0.05, max=0.5, step=0.01, value=0.25,
+                   tooltip={"placement": "bottom"},
+                   marks={0.05: "0.05", 0.25: "0.25", 0.5: "0.5"},
+                   included=False),
+        html.Br(),
+
         html.Button("Update", id="update-btn", n_clicks=0)
     ], style={"width": "25%", "padding": "20px"}),
+
     html.Div([
         dcc.Graph(id="result-plot", style={"height": "350px"}),
         html.Div([
@@ -251,7 +267,6 @@ app.layout = html.Div([
         ])
     ], style={"width": "75%", "padding": "20px"})
 ], style={"display": "flex", "flexDirection": "row", "flexWrap": "nowrap", "width": "100vw"})
-
 # Toggle gamma vs real controls
 @app.callback(
     Output("gamma-controls", "style"),
@@ -281,6 +296,22 @@ def update_real_source_info(delay_source):
     except Exception as e:
         return f"Error loading real source: {e}"
 
+# === Add high frequency component to wiener deconvolution ===
+def add_high_frequency_component(signal, strength=0.5, freq=0.25):
+    """
+    Add a sinusoidal high-frequency component to the signal.
+    Parameters:
+        signal: np.ndarray — base signal to modify
+        strength: float — amplitude of the high frequency wave
+        freq: float — frequency in cycles/day (e.g. 0.25 ~ 4-day cycle)
+    Returns:
+        modified signal with added high-frequency noise
+    """
+    t = np.arange(len(signal))
+    high_freq_wave = strength * np.sin(2 * np.pi * freq * t)
+    return np.clip(signal + high_freq_wave, a_min=0, a_max=None)
+
+
 @app.callback(
     Output("result-plot", "figure"),
     Output("delay-plot", "figure"),
@@ -294,9 +325,12 @@ def update_real_source_info(delay_source):
     State("window-days", "value"),
     State("max-delay", "value"),
     State("window-end", "date"),
+    State("hf-strength", "value"),
+    State("hf-freq", "value"),
 )
 def update_figures(n_clicks, geo_value, delay_source, mean, scale,
-                   kernel_method, window_days, max_delay, window_end_str):
+                   kernel_method, window_days, max_delay, window_end_str,
+                   hf_strength, hf_freq):
     # --- Prepare observed series ---
     df = df_full[df_full["geo_value"] == geo_value]
     df = df.groupby("time_value")["JHU-Cases"].mean().reset_index().sort_values("time_value")
@@ -339,56 +373,54 @@ def update_figures(n_clicks, geo_value, delay_source, mean, scale,
         delay_kernel = delay_kernel / delay_kernel.sum() if delay_kernel.sum() > 0 else delay_kernel
 
     # --- Deconvolution (reconstructed infections) ---
-    fft_curve = fft_deconvolution(confirmed, delay_kernel)
     wiener_curve = wiener_deconvolution(confirmed, delay_kernel)
 
-    # --- Forward-model to observed scale (reconvolution) for comparison ---
-    fft_reconv = reconvolve_linear(fft_curve, delay_kernel, out_len=len(confirmed))
+    # --- Add high-frequency component to reconstructed infection curve ---
+    freq = hf_freq  # cycles/day (high frequency)
+    amp = hf_strength * np.max(wiener_curve)  # amplitude as % of peak
+    t = np.arange(len(wiener_curve))
+    highfreq_signal = amp * np.sin(2 * np.pi * freq * t)
+
+    altered_infection = wiener_curve + highfreq_signal
+    #altered_infection[altered_infection < 0] = 0  # ensure non-negativity
+
+    # --- Forward-model to observed scale (reconvolution) ---
     wiener_reconv = reconvolve_linear(wiener_curve, delay_kernel, out_len=len(confirmed))
+    altered_reconv = reconvolve_linear(altered_infection, delay_kernel, out_len=len(confirmed))
 
     # --- Fit diagnostics (RMSE vs. raw confirmed) ---
-    rmse_fft = rmse(confirmed, fft_reconv)
     rmse_wiener = rmse(confirmed, wiener_reconv)
+    rmse_altered = rmse(confirmed, altered_reconv)
 
     # --- Figure 1: Observed vs reconstructions + reconvolved predictions ---
     fig_main = go.Figure()
     fig_main.add_trace(go.Scatter(x=time, y=confirmed, mode='lines', name='Confirmed Cases'))
 
-    # Reconstructed infections
-    fig_main.add_trace(go.Scatter(x=time, y=fft_curve, mode='lines', name='FFT deconv'))
     fig_main.add_trace(go.Scatter(x=time, y=wiener_curve, mode='lines', name='Wiener deconv'))
+    fig_main.add_trace(go.Scatter(x=time, y=wiener_reconv, mode='lines', line=dict(dash='dash'),
+                                  name=f'Wiener re-conv (RMSE {rmse_wiener:.1f})'))
 
-    # Forward-modeled expected observed (reconvolved)
-    fig_main.add_trace(go.Scatter(
-        x=time, y=fft_reconv, mode='lines',
-        line=dict(dash='dash'),
-        name=f'FFT re-conv (RMSE {rmse_fft:.1f})'
-    ))
-    fig_main.add_trace(go.Scatter(
-        x=time, y=wiener_reconv, mode='lines',
-        line=dict(dash='dash'),
-        name=f'Wiener re-conv (RMSE {rmse_wiener:.1f})'
-    ))
+    fig_main.add_trace(go.Scatter(x=time, y=altered_infection, mode='lines', name='Alt Infection (hi-freq)'))
+    fig_main.add_trace(go.Scatter(x=time, y=altered_reconv, mode='lines', line=dict(dash='dot'),
+                                  name=f'Alt reconv (RMSE {rmse_altered:.1f})'))
 
-    fig_main.update_layout(title=f"US Infection Reconstruction in {geo_value.upper()}",
+    fig_main.update_layout(title=f"US Infection Reconstruction in {geo_value.upper()} — The raw vs. Wiener vs. Altered",
                            xaxis_title="Date", yaxis_title="Cases", height=350,
                            legend=dict(
                                orientation="h",
                                yanchor="bottom",
-                               y=1.05,
+                               y=-0.7,
                                xanchor="center",
                                x=0.5,
-                               traceorder="normal",
-                               tracegroupgap=0  # no extra vertical spacing
+                               traceorder="normal"
                            ),
-                           margin=dict(t=100)  # extra top margin for title + legend
-    )
+                           margin=dict(t=100))
 
     # --- Figure 2: Delay kernel ---
     grid = np.arange(len(delay_kernel))
     fig_delay = go.Figure()
     fig_delay.add_trace(go.Scatter(x=grid, y=delay_kernel, mode='lines', name="Delay kernel"))
-    fig_delay.update_layout(title=f"Delay Distribution — {label}{gamma_fit_txt}",
+    fig_delay.update_layout(title=f"Delay Distribution<br> — {label}{gamma_fit_txt}",
                             xaxis_title="Delay (days)", yaxis_title="Probability", height=300)
 
     # --- Figure 3: FFT power spectrum of delay kernel ---
@@ -403,4 +435,4 @@ def update_figures(n_clicks, geo_value, delay_source, mean, scale,
     return fig_main, fig_delay, fig_fft
 
 if __name__ == "__main__":
-    app.run(debug=False)
+    app.run(debug=False, port=8052)
